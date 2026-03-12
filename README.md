@@ -77,28 +77,16 @@ Available from the Command Palette:
 - `Codex Alerts: Show Diagnostics`
 - `Codex Alerts: Restart Watchers`
 
-### Local Development
+### Install the VSIX
 
-1. Open the `codex-alerts` folder in VS Code.
-2. Press `F5`.
-3. In the new Extension Development Host, run Codex.
-4. Use the test commands to confirm notifications and sounds.
+1. Download the latest `.vsix` file from the [Releases page](https://github.com/Yva1nne/Codex-Alert/releases).
+2. In VS Code, open the Extensions view.
+3. Open the `...` menu in the top-right corner.
+4. Choose `Install from VSIX...`.
+5. Select the downloaded `local.codex-alerts-*.vsix` file.
+6. Reload VS Code if prompted.
 
-### Build
-
-Run:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_vsix.ps1
-```
-
-The generated package will be written to `dist/`.
-
-If you prefer Python, the original builder is still available:
-
-```powershell
-python .\scripts\build_vsix.py
-```
+After installation, open Settings and search for `Codex Alerts` to adjust notification and sound behavior.
 
 ### Notes
 
@@ -181,28 +169,16 @@ Codex Alerts 是一个轻量的 VS Code 配套扩展，用来监听本地 Codex 
 - `Codex Alerts: Show Diagnostics`
 - `Codex Alerts: Restart Watchers`
 
-### 本地开发
+### 安装 VSIX
 
-1. 在 VS Code 中打开 `codex-alerts` 文件夹。
-2. 按 `F5`。
-3. 在新的 Extension Development Host 中运行 Codex。
-4. 使用测试命令确认弹窗和音效是否正常。
+1. 从 [Releases 页面](https://github.com/Yva1nne/Codex-Alert/releases) 下载最新的 `.vsix` 文件。
+2. 在 VS Code 中打开扩展视图。
+3. 点击右上角的 `...` 菜单。
+4. 选择 `从 VSIX 安装...`。
+5. 选中下载好的 `local.codex-alerts-*.vsix` 文件。
+6. 如果 VS Code 提示，执行重载。
 
-### 打包
-
-运行：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_vsix.ps1
-```
-
-生成的安装包会写入 `dist/` 目录。
-
-如果你更想用 Python，原来的打包脚本也还保留：
-
-```powershell
-python .\scripts\build_vsix.py
-```
+安装完成后，可以在设置中搜索 `Codex Alerts`，调整提醒和音效行为。
 
 ### 说明
 
