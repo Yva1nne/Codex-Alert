@@ -19,6 +19,17 @@ Codex Alerts 是一个轻量的 VS Code 配套扩展，用来监听本地 Codex 
 - 在内置 `beep` 和 Windows 系统音之间切换
 - 让任务完成轮询与审批、输入监听独立工作
 
+## 安装 VSIX
+
+1. 从 [Releases 页面](https://github.com/Yva1nne/Codex-Alert/releases) 下载最新的 `.vsix` 文件。
+2. 在 VS Code 中打开扩展视图。
+3. 点击右上角的 `...` 菜单。
+4. 选择 `从 VSIX 安装...`。
+5. 选中下载好的 `local.codex-alerts-*.vsix` 文件。
+6. 如果 VS Code 提示，执行重载。
+
+安装完成后，可以在设置中搜索 `Codex Alerts`，调整提醒和音效行为。
+
 ## 工作原理
 
 这个扩展不会修改官方 ChatGPT/Codex 扩展，而是监听本地 Codex 数据源：
@@ -73,17 +84,6 @@ Codex Alerts 是一个轻量的 VS Code 配套扩展，用来监听本地 Codex 
 - `Codex Alerts: Test User Input Notification`
 - `Codex Alerts: Show Diagnostics`
 - `Codex Alerts: Restart Watchers`
-
-## 安装 VSIX
-
-1. 从 [Releases 页面](https://github.com/Yva1nne/Codex-Alert/releases) 下载最新的 `.vsix` 文件。
-2. 在 VS Code 中打开扩展视图。
-3. 点击右上角的 `...` 菜单。
-4. 选择 `从 VSIX 安装...`。
-5. 选中下载好的 `local.codex-alerts-*.vsix` 文件。
-6. 如果 VS Code 提示，执行重载。
-
-安装完成后，可以在设置中搜索 `Codex Alerts`，调整提醒和音效行为。
 
 ## 说明
 

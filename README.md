@@ -22,6 +22,17 @@ You can also:
 - choose between the built-in beep and Windows system sounds
 - keep task-complete polling independent from approval and input monitoring
 
+### Install the VSIX
+
+1. Download the latest `.vsix` file from the [Releases page](https://github.com/Yva1nne/Codex-Alert/releases).
+2. In VS Code, open the Extensions view.
+3. Open the `...` menu in the top-right corner.
+4. Choose `Install from VSIX...`.
+5. Select the downloaded `local.codex-alerts-*.vsix` file.
+6. Reload VS Code if prompted.
+
+After installation, open Settings and search for `Codex Alerts` to adjust notification and sound behavior.
+
 ### How It Works
 
 This extension does not modify the official ChatGPT/Codex extension. Instead, it watches local Codex data sources:
@@ -77,17 +88,6 @@ Available from the Command Palette:
 - `Codex Alerts: Show Diagnostics`
 - `Codex Alerts: Restart Watchers`
 
-### Install the VSIX
-
-1. Download the latest `.vsix` file from the [Releases page](https://github.com/Yva1nne/Codex-Alert/releases).
-2. In VS Code, open the Extensions view.
-3. Open the `...` menu in the top-right corner.
-4. Choose `Install from VSIX...`.
-5. Select the downloaded `local.codex-alerts-*.vsix` file.
-6. Reload VS Code if prompted.
-
-After installation, open Settings and search for `Codex Alerts` to adjust notification and sound behavior.
-
 ### Notes
 
 - On Windows, sound playback uses PowerShell.
@@ -113,6 +113,17 @@ Codex Alerts 是一个轻量的 VS Code 配套扩展，用来监听本地 Codex 
 - 只在 VS Code 窗口非激活时提醒
 - 在内置 `beep` 和 Windows 系统音之间切换
 - 让任务完成轮询与审批、输入监听独立工作
+
+### 安装 VSIX
+
+1. 从 [Releases 页面](https://github.com/Yva1nne/Codex-Alert/releases) 下载最新的 `.vsix` 文件。
+2. 在 VS Code 中打开扩展视图。
+3. 点击右上角的 `...` 菜单。
+4. 选择 `从 VSIX 安装...`。
+5. 选中下载好的 `local.codex-alerts-*.vsix` 文件。
+6. 如果 VS Code 提示，执行重载。
+
+安装完成后，可以在设置中搜索 `Codex Alerts`，调整提醒和音效行为。
 
 ### 工作原理
 
@@ -168,17 +179,6 @@ Codex Alerts 是一个轻量的 VS Code 配套扩展，用来监听本地 Codex 
 - `Codex Alerts: Test User Input Notification`
 - `Codex Alerts: Show Diagnostics`
 - `Codex Alerts: Restart Watchers`
-
-### 安装 VSIX
-
-1. 从 [Releases 页面](https://github.com/Yva1nne/Codex-Alert/releases) 下载最新的 `.vsix` 文件。
-2. 在 VS Code 中打开扩展视图。
-3. 点击右上角的 `...` 菜单。
-4. 选择 `从 VSIX 安装...`。
-5. 选中下载好的 `local.codex-alerts-*.vsix` 文件。
-6. 如果 VS Code 提示，执行重载。
-
-安装完成后，可以在设置中搜索 `Codex Alerts`，调整提醒和音效行为。
 
 ### 说明
 
