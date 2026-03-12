@@ -1,0 +1,131 @@
+{
+  "name": "codex-alerts",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "0.0.3",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:codexAlerts.testTaskNotification",
+    "onCommand:codexAlerts.testApprovalNotification",
+    "onCommand:codexAlerts.testUserInputNotification",
+    "onCommand:codexAlerts.showDiagnostics",
+    "onCommand:codexAlerts.restart"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexAlerts.testTaskNotification",
+        "title": "%command.testTask.title%"
+      },
+      {
+        "command": "codexAlerts.testApprovalNotification",
+        "title": "%command.testApproval.title%"
+      },
+      {
+        "command": "codexAlerts.testUserInputNotification",
+        "title": "%command.testUserInput.title%"
+      },
+      {
+        "command": "codexAlerts.showDiagnostics",
+        "title": "%command.showDiagnostics.title%"
+      },
+      {
+        "command": "codexAlerts.restart",
+        "title": "%command.restart.title%"
+      }
+    ],
+    "configuration": {
+      "title": "%configuration.title%",
+      "properties": {
+        "codexAlerts.enableTaskCompleteAlerts": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.enableTaskCompleteAlerts.description%"
+        },
+        "codexAlerts.enableApprovalAlerts": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.enableApprovalAlerts.description%"
+        },
+        "codexAlerts.enableUserInputAlerts": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.enableUserInputAlerts.description%"
+        },
+        "codexAlerts.onlyNotifyWhenWindowInactive": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.onlyNotifyWhenWindowInactive.description%"
+        },
+        "codexAlerts.enableSound": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.enableSound.description%"
+        },
+        "codexAlerts.soundEffect": {
+          "type": "string",
+          "default": "beep",
+          "enum": [
+            "beep",
+            "systemAsterisk",
+            "systemExclamation",
+            "systemHand",
+            "systemQuestion"
+          ],
+          "enumDescriptions": [
+            "%config.soundEffect.beep%",
+            "%config.soundEffect.systemAsterisk%",
+            "%config.soundEffect.systemExclamation%",
+            "%config.soundEffect.systemHand%",
+            "%config.soundEffect.systemQuestion%"
+          ],
+          "description": "%config.soundEffect.description%"
+        },
+        "codexAlerts.soundFrequencyHz": {
+          "type": "number",
+          "default": 880,
+          "minimum": 100,
+          "maximum": 4000,
+          "description": "%config.soundFrequencyHz.description%"
+        },
+        "codexAlerts.soundDurationMs": {
+          "type": "number",
+          "default": 250,
+          "minimum": 50,
+          "maximum": 5000,
+          "description": "%config.soundDurationMs.description%"
+        },
+        "codexAlerts.pollIntervalMs": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 500,
+          "maximum": 30000,
+          "description": "%config.pollIntervalMs.description%"
+        },
+        "codexAlerts.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "%config.pythonPath.description%"
+        },
+        "codexAlerts.sqlite3Path": {
+          "type": "string",
+          "default": "",
+          "description": "%config.sqlite3Path.description%"
+        },
+        "codexAlerts.debugLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "%config.debugLogging.description%"
+        }
+      }
+    }
+  }
+}
