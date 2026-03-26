@@ -1,4 +1,9 @@
-﻿.git/**
+.git/**
 .github/**
 **/*.pyc
 __pycache__/**
+dist/**
+debug.log
+.gitignore
+scripts/build_vsix.ps1
+scripts/build_vsix.py

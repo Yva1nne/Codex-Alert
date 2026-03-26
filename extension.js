@@ -8,8 +8,21 @@ const { execFile } = require("child_process");
 const OPEN_CODEX_ACTION = "Open Codex";
 const RECENT_SESSION_FILE_LIMIT = 5;
 const SESSION_READ_DELAY_MS = 120;
-const TOOL_EVENT_TTL_MS = 60000;
+const SESSION_SCAN_INTERVAL_MS = 1500;
+const SESSION_NEW_FILE_GRACE_MS = 5000;
+const SESSION_NEW_FILE_MAX_START_BYTES = 64 * 1024;
+const TOOL_EVENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const TOOL_EVENT_CACHE_LIMIT = 2048;
+const TOOL_EVENT_STATE_KEY = "codexAlerts.seenEvents";
 const LOG_QUERY_LIMIT = 200;
+const APPROVAL_LIKE_COMMAND_PATTERNS = Object.freeze([
+  /\bRemove-Item\b/i,
+  /\brm\b/i,
+  /\bdel\b/i,
+  /\berase\b/i,
+  /\bgit\s+reset\s+--hard\b/i,
+  /\bgit\s+clean\s+-fd\b/i
+]);
 const WINDOWS_SOUND_COMMANDS = Object.freeze({
   systemAsterisk: "[System.Media.SystemSounds]::Asterisk.Play()",
   systemExclamation: "[System.Media.SystemSounds]::Exclamation.Play()",
@@ -27,19 +40,31 @@ function activate(context) {
 
 function deactivate() {}
 
+const WINDOWS_NOTIFICATION_ICONS = Object.freeze({
+  task: "Information",
+  approval: "Warning",
+  userInput: "Warning"
+});
+
 class CodexAlertsController {
   constructor(context) {
     this.context = context;
     this.output = vscode.window.createOutputChannel("Codex Alerts");
     this.disposables = [];
     this.sessionMonitor = null;
-    this.logMonitor = null;
-    this.seenEvents = new ExpiringSet();
+    this.logMonitors = [];
+    this.seenEvents = new ExpiringSet(context.globalState, TOOL_EVENT_STATE_KEY);
     this.backendSummary = "not initialized";
     this.config = loadConfig();
+    this.strings = createRuntimeStrings();
   }
 
   async start() {
+    try {
+      await this.seenEvents.initialize();
+    } catch (error) {
+      this.error(`Recent alert cache initialization failed: ${formatError(error)}`);
+    }
     this.registerCommands();
     this.registerConfigWatcher();
     await this.restart();
@@ -50,22 +75,22 @@ class CodexAlertsController {
       vscode.commands.registerCommand("codexAlerts.testTaskNotification", async () => {
         await this.notify("task", {
           id: `manual-task-${Date.now()}`,
-          title: "Codex task completed",
-          detail: "Manual test notification."
+          title: this.strings.taskCompletedTitle,
+          detail: this.strings.manualTestDetail
         });
       }),
       vscode.commands.registerCommand("codexAlerts.testApprovalNotification", async () => {
         await this.notify("approval", {
           id: `manual-approval-${Date.now()}`,
-          title: "Codex needs approval",
-          detail: "Manual test notification."
+          title: this.strings.approvalTitle,
+          detail: this.strings.manualTestDetail
         });
       }),
       vscode.commands.registerCommand("codexAlerts.testUserInputNotification", async () => {
         await this.notify("userInput", {
           id: `manual-input-${Date.now()}`,
-          title: "Codex needs input",
-          detail: "Manual test notification."
+          title: this.strings.userInputTitle,
+          detail: this.strings.manualTestDetail
         });
       }),
       vscode.commands.registerCommand("codexAlerts.showDiagnostics", async () => {
@@ -73,7 +98,7 @@ class CodexAlertsController {
       }),
       vscode.commands.registerCommand("codexAlerts.restart", async () => {
         await this.restart();
-        vscode.window.showInformationMessage("Codex Alerts watchers restarted.");
+        vscode.window.showInformationMessage(this.strings.watchersRestarted);
       })
     );
   }
@@ -94,12 +119,12 @@ class CodexAlertsController {
 
   async restart() {
     this.stopWatchers();
-    this.seenEvents.clear();
     this.config = loadConfig();
+    this.strings = createRuntimeStrings();
 
     const home = os.homedir();
     const sessionRoot = path.join(home, ".codex", "sessions");
-    const dbPath = path.join(home, ".codex", "state_5.sqlite");
+    const dbPaths = selectPreferredCodexLogDbs(home);
     const queryScriptPath = this.context.asAbsolutePath(path.join("scripts", "query_codex_logs.py"));
 
     this.sessionMonitor = new SessionMonitor({
@@ -110,7 +135,7 @@ class CodexAlertsController {
       onUserInputRequested: (event) => this.handleUserInputRequested(event)
     });
 
-    this.logMonitor = new SqlLogMonitor({
+    this.logMonitors = dbPaths.map((dbPath) => new SqlLogMonitor({
       dbPath,
       output: this.output,
       debug: this.config.debugLogging,
@@ -119,11 +144,11 @@ class CodexAlertsController {
       sqlite3Path: this.config.sqlite3Path,
       queryScriptPath,
       onTaskComplete: (event) => this.handleTaskComplete(event)
-    });
+    }));
 
     await this.sessionMonitor.start();
-    await this.logMonitor.start();
-    this.backendSummary = this.logMonitor.getBackendSummary();
+    await Promise.all(this.logMonitors.map((monitor) => monitor.start()));
+    this.backendSummary = this.logMonitors.map((monitor) => monitor.getBackendSummary()).join("; ");
     this.info(`Watchers ready. Completion backend: ${this.backendSummary}`);
   }
 
@@ -133,9 +158,11 @@ class CodexAlertsController {
       this.sessionMonitor = null;
     }
 
-    if (this.logMonitor) {
-      this.logMonitor.dispose();
-      this.logMonitor = null;
+    if (this.logMonitors.length > 0) {
+      for (const monitor of this.logMonitors) {
+        monitor.dispose();
+      }
+      this.logMonitors = [];
     }
   }
 
@@ -146,8 +173,8 @@ class CodexAlertsController {
 
     await this.notify("task", {
       id: `task:${event.id}`,
-      title: "Codex task completed",
-      detail: "The current Codex run reported completion."
+      title: this.strings.taskCompletedTitle,
+      detail: this.strings.taskCompletedDetail
     });
   }
 
@@ -156,10 +183,10 @@ class CodexAlertsController {
       return;
     }
 
-    const detail = trimText(event.detail || "Codex wants approval for an elevated command.", 160);
+    const detail = trimText(sanitizeUserFacingText(event.detail, this.strings.approvalDetail), 160);
     await this.notify("approval", {
       id: `approval:${event.id}`,
-      title: "Codex needs approval",
+      title: this.strings.approvalTitle,
       detail
     });
   }
@@ -169,10 +196,10 @@ class CodexAlertsController {
       return;
     }
 
-    const detail = trimText(event.detail || "Codex asked for input.", 160);
+    const detail = trimText(sanitizeUserFacingText(event.detail, this.strings.userInputDetail), 160);
     await this.notify("userInput", {
       id: `user-input:${event.id}`,
-      title: "Codex needs input",
+      title: this.strings.userInputTitle,
       detail
     });
   }
@@ -183,7 +210,11 @@ class CodexAlertsController {
       return;
     }
 
-    this.seenEvents.add(event.id);
+    try {
+      await this.seenEvents.add(event.id);
+    } catch (error) {
+      this.error(`Recent alert cache update failed: ${formatError(error)}`);
+    }
 
     if (this.shouldSkipNotificationBecauseWindowIsFocused(kind, event)) {
       return;
@@ -192,7 +223,18 @@ class CodexAlertsController {
     this.logEvent(kind, event);
     await this.playSound();
 
-    const message = event.detail ? `${event.title}: ${event.detail}` : event.title;
+    const title = sanitizeNotificationTitle(kind, event.title);
+    const detail = sanitizeUserFacingText(event.detail, "");
+    const message = detail ? `${title}: ${detail}` : title;
+    if (this.config.useWindowsMessageBox && process.platform === "win32") {
+      try {
+        this.showWindowsNotification(kind, title, message);
+        return;
+      } catch (error) {
+        this.error(`Windows notification failed, falling back to VS Code notifications: ${formatError(error)}`);
+      }
+    }
+
     const show = kind === "task" ? vscode.window.showInformationMessage : vscode.window.showWarningMessage;
     const selection = await show(message, OPEN_CODEX_ACTION);
 
@@ -235,19 +277,41 @@ class CodexAlertsController {
     });
   }
 
+  showWindowsNotification(kind, title, message) {
+    const encodedCommand = encodePowerShellCommand(buildWindowsNotificationScript());
+    const env = {
+      ...process.env,
+      CODEX_ALERT_KIND: kind,
+      CODEX_ALERT_TITLE: title,
+      CODEX_ALERT_MESSAGE: message,
+      CODEX_ALERT_ICON: WINDOWS_NOTIFICATION_ICONS[kind] || "Information",
+      CODEX_ALERT_FLASH_TASKBAR: this.config.flashTaskbarOnAlert ? "1" : "0",
+      CODEX_ALERT_PARENT_PID: String(process.pid),
+      CODEX_ALERT_TIMEOUT_MS: "6000"
+    };
+
+    execFile("powershell", ["-NoProfile", "-EncodedCommand", encodedCommand], { windowsHide: true, env }, (error) => {
+      if (error) {
+        this.error(`Windows notification failed: ${formatError(error)}`);
+      }
+    });
+  }
+
   async showDiagnostics() {
     const home = os.homedir();
     const sessionRoot = path.join(home, ".codex", "sessions");
-    const dbPath = path.join(home, ".codex", "state_5.sqlite");
     const lines = [
       `Completion backend: ${this.backendSummary}`,
       `Session root: ${existsSync(sessionRoot) ? sessionRoot : `${sessionRoot} (missing)`}`,
-      `State DB: ${existsSync(dbPath) ? dbPath : `${dbPath} (missing)`}`,
+      `State DB: ${existsSync(path.join(home, ".codex", "state_5.sqlite")) ? path.join(home, ".codex", "state_5.sqlite") : `${path.join(home, ".codex", "state_5.sqlite")} (missing)`}`,
+      `Logs DB: ${existsSync(path.join(home, ".codex", "logs_1.sqlite")) ? path.join(home, ".codex", "logs_1.sqlite") : `${path.join(home, ".codex", "logs_1.sqlite")} (missing)`}`,
       `Task alerts: ${this.config.enableTaskCompleteAlerts ? "on" : "off"}`,
       `Approval alerts: ${this.config.enableApprovalAlerts ? "on" : "off"}`,
       `User-input alerts: ${this.config.enableUserInputAlerts ? "on" : "off"}`,
       `Only when window inactive: ${this.config.onlyNotifyWhenWindowInactive ? "on" : "off"}`,
       `Window focused now: ${vscode.window.state.focused ? "yes" : "no"}`,
+      `Windows native notification: ${this.config.useWindowsMessageBox ? "on" : "off"}`,
+      `Flash taskbar: ${this.config.flashTaskbarOnAlert ? "on" : "off"}`,
       `Sound: ${this.config.enableSound ? "on" : "off"}`,
       `Sound effect: ${normalizeSoundEffect(this.config.soundEffect)}`
     ];
@@ -259,7 +323,7 @@ class CodexAlertsController {
       this.output.appendLine(line);
     }
 
-    await vscode.window.showInformationMessage("Codex Alerts diagnostics written to the output channel.");
+    await vscode.window.showInformationMessage(this.strings.diagnosticsWritten);
   }
 
   logEvent(kind, event) {
@@ -298,6 +362,7 @@ class SessionMonitor {
     this.fallbackTimer = null;
     this.pendingReads = new Map();
     this.fileState = new Map();
+    this.startedAtMs = Date.now();
   }
 
   async start() {
@@ -308,6 +373,7 @@ class SessionMonitor {
 
     await this.primeRecentFiles();
     this.startWatcher();
+    this.startPolling();
   }
 
   async primeRecentFiles() {
@@ -316,7 +382,7 @@ class SessionMonitor {
     this.debug(`Primed ${files.length} recent session files.`);
   }
 
-  async primeFile(filePath) {
+  async primeFile(filePath, startAtEnd = true) {
     try {
       const stat = await fsp.stat(filePath);
       if (!stat.isFile()) {
@@ -324,9 +390,10 @@ class SessionMonitor {
       }
 
       this.fileState.set(filePath, {
-        offset: stat.size,
+        offset: startAtEnd ? stat.size : 0,
         remainder: ""
       });
+      this.debug(`Primed ${filePath} at ${startAtEnd ? "EOF" : "start"} (${stat.size} bytes).`);
     } catch (error) {
       this.debug(`Prime failed for ${filePath}: ${formatError(error)}`);
     }
@@ -344,20 +411,23 @@ class SessionMonitor {
       });
       this.debug(`Watching session root recursively: ${this.sessionRoot}`);
     } catch (error) {
-      this.output.appendLine(`[warn] Recursive session watch failed, falling back to polling: ${formatError(error)}`);
-      this.fallbackTimer = setInterval(() => {
-        this.scanRecentFiles().catch((scanError) => {
-          this.debug(`Fallback scan failed: ${formatError(scanError)}`);
-        });
-      }, 5000);
+      this.output.appendLine(`[warn] Recursive session watch failed, using polling: ${formatError(error)}`);
     }
+  }
+
+  startPolling() {
+    this.fallbackTimer = setInterval(() => {
+      this.scanRecentFiles().catch((scanError) => {
+        this.debug(`Session polling scan failed: ${formatError(scanError)}`);
+      });
+    }, SESSION_SCAN_INTERVAL_MS);
   }
 
   async scanRecentFiles() {
     const files = await collectRecentJsonlFiles(this.sessionRoot, RECENT_SESSION_FILE_LIMIT);
     for (const filePath of files) {
       if (!this.fileState.has(filePath)) {
-        await this.primeFile(filePath);
+        await this.primeFile(filePath, await this.shouldPrimeFromStart(filePath));
       }
       this.scheduleRead(filePath);
     }
@@ -385,7 +455,7 @@ class SessionMonitor {
 
     let state = this.fileState.get(filePath);
     if (!state) {
-      await this.primeFile(filePath);
+      await this.primeFile(filePath, await this.shouldPrimeFromStart(filePath));
       state = this.fileState.get(filePath);
     }
 
@@ -443,28 +513,46 @@ class SessionMonitor {
       return;
     }
 
-    if (record.type !== "response_item" || !record.payload || record.payload.type !== "function_call") {
+    const toolCall = extractToolCallRecord(record);
+    if (!toolCall) {
       return;
     }
 
-    const payload = record.payload;
+    const payload = toolCall.payload;
+    const eventId = payload.call_id || `${filePath}:${record.timestamp}`;
+    this.debug(`Inspecting tool call ${payload.name || "unknown"} for ${eventId}.`);
+
     if (payload.name === "request_user_input") {
-      const detail = formatUserInputDetail(parseNestedJson(payload.arguments));
+      const args = getToolCallArguments(payload.arguments);
+      const detail = formatUserInputDetail(args);
+      this.debug(`Matched user input request for ${eventId}.`);
       this.onUserInputRequested({
-        id: payload.call_id || `${filePath}:${record.timestamp}`,
+        id: eventId,
         detail
       });
       return;
     }
 
-    const args = parseNestedJson(payload.arguments);
-    if (!args || args.sandbox_permissions !== "require_escalated") {
+    const args = getToolCallArguments(payload.arguments);
+    if (!args) {
+      if (isApprovalCandidateToolName(payload.name)) {
+        this.debug(`Skipped ${payload.name || "unknown"} for ${eventId}: parse failure.`);
+      }
       return;
     }
 
-    const detail = formatApprovalDetail(payload.name, args);
+    const approval = findApprovalRequest(args, payload.name);
+    if (!approval) {
+      if (isApprovalCandidateToolName(payload.name)) {
+        this.debug(`Skipped ${payload.name || "unknown"} for ${eventId}: not an approval candidate.`);
+      }
+      return;
+    }
+
+    const detail = formatApprovalDetail(approval.toolName || payload.name, approval.args);
+    this.debug(`Matched approval request for ${eventId} via ${approval.toolName || payload.name || "unknown"}.`);
     this.onApprovalRequested({
-      id: payload.call_id || `${filePath}:${record.timestamp}`,
+      id: eventId,
       detail
     });
   }
@@ -472,6 +560,31 @@ class SessionMonitor {
   debug(message) {
     if (this.debugEnabled) {
       this.output.appendLine(`[session-debug] ${message}`);
+    }
+  }
+
+  async shouldPrimeFromStart(filePath) {
+    try {
+      const stat = await fsp.stat(filePath);
+      if (!stat.isFile()) {
+        return false;
+      }
+
+      const createdAtMs = Number(stat.birthtimeMs) || 0;
+      const modifiedAtMs = Number(stat.mtimeMs) || 0;
+      const referenceTime = createdAtMs > 0 ? createdAtMs : modifiedAtMs;
+      const recentlyCreated = referenceTime >= (this.startedAtMs - SESSION_NEW_FILE_GRACE_MS);
+      const smallEnoughToReplay = stat.size <= SESSION_NEW_FILE_MAX_START_BYTES;
+      const primeFromStart = recentlyCreated && smallEnoughToReplay;
+      this.debug(
+        `Discovered ${filePath} (created ${new Date(createdAtMs || referenceTime).toISOString()}, `
+        + `modified ${new Date(modifiedAtMs || referenceTime).toISOString()}, `
+        + `size ${stat.size}); priming at ${primeFromStart ? "start" : "EOF"}.`
+      );
+      return primeFromStart;
+    } catch (error) {
+      this.debug(`Failed to inspect ${filePath} before priming: ${formatError(error)}. Defaulting to EOF.`);
+      return false;
     }
   }
 
@@ -544,10 +657,20 @@ class SqlLogMonitor {
   processRow(row) {
     const message = row.message || "";
     if (message.includes("app-server event: codex/event/task_complete")) {
+      this.debug(`Matched task_complete log row ${row.id} from ${row.target || "unknown"}.`);
       this.onTaskComplete({ id: row.id });
       return;
     }
 
+    if (isResponseCompletedLogMessage(message)) {
+      this.debug(`Matched response.completed row ${row.id} from ${row.target || "unknown"}.`);
+      this.onTaskComplete({ id: row.id });
+      return;
+    }
+
+    if (this.debugEnabled && message.includes("task_complete")) {
+      this.debug(`Observed task_complete-like row ${row.id} but did not match exactly: ${trimText(message, 160)}`);
+    }
 
   }
 
@@ -717,13 +840,39 @@ class SqliteCliBackend {
 }
 
 class ExpiringSet {
-  constructor() {
+  constructor(storage, storageKey) {
+    this.storage = storage;
+    this.storageKey = storageKey;
     this.values = new Map();
+    this.persistPromise = Promise.resolve();
   }
 
-  add(key) {
+  async initialize() {
+    const entries = this.storage.get(this.storageKey, []);
+    this.values.clear();
+
+    if (Array.isArray(entries)) {
+      for (const entry of entries) {
+        if (!entry || typeof entry.key !== "string") {
+          continue;
+        }
+
+        const timestamp = Number(entry.timestamp) || 0;
+        if (timestamp > 0) {
+          this.values.set(entry.key, timestamp);
+        }
+      }
+    }
+
+    this.cleanup();
+    await this.persist();
+  }
+
+  async add(key) {
     this.cleanup();
     this.values.set(key, Date.now());
+    this.trimToLimit();
+    await this.persist();
   }
 
   has(key) {
@@ -731,8 +880,9 @@ class ExpiringSet {
     return this.values.has(key);
   }
 
-  clear() {
+  async clear() {
     this.values.clear();
+    await this.persist();
   }
 
   cleanup() {
@@ -742,6 +892,31 @@ class ExpiringSet {
         this.values.delete(key);
       }
     }
+    this.trimToLimit();
+  }
+
+  trimToLimit() {
+    if (this.values.size <= TOOL_EVENT_CACHE_LIMIT) {
+      return;
+    }
+
+    const entries = [...this.values.entries()].sort((left, right) => left[1] - right[1]);
+    const overflow = entries.length - TOOL_EVENT_CACHE_LIMIT;
+    for (let index = 0; index < overflow; index += 1) {
+      this.values.delete(entries[index][0]);
+    }
+  }
+
+  async persist() {
+    this.persistPromise = this.persistPromise
+      .catch(() => undefined)
+      .then(async () => {
+        const entries = [...this.values.entries()]
+          .sort((left, right) => left[1] - right[1])
+          .map(([key, timestamp]) => ({ key, timestamp }));
+        await this.storage.update(this.storageKey, entries);
+      });
+    await this.persistPromise;
   }
 }
 
@@ -771,6 +946,8 @@ function loadConfig() {
     enableApprovalAlerts: config.get("enableApprovalAlerts", true),
     enableUserInputAlerts: config.get("enableUserInputAlerts", true),
     onlyNotifyWhenWindowInactive: config.get("onlyNotifyWhenWindowInactive", false),
+    useWindowsMessageBox: config.get("useWindowsMessageBox", true),
+    flashTaskbarOnAlert: config.get("flashTaskbarOnAlert", true),
     enableSound: config.get("enableSound", true),
     soundEffect: config.get("soundEffect", "beep"),
     soundFrequencyHz: config.get("soundFrequencyHz", 880),
@@ -783,6 +960,10 @@ function loadConfig() {
 }
 
 function parseNestedJson(value) {
+  if (value && typeof value === "object") {
+    return value;
+  }
+
   if (typeof value !== "string" || !value.trim()) {
     return null;
   }
@@ -794,9 +975,143 @@ function parseNestedJson(value) {
   }
 }
 
+function extractToolCallRecord(record) {
+  if (!record || typeof record !== "object") {
+    return null;
+  }
+
+  const payload = record.payload;
+  if (payload && typeof payload === "object" && payload.type === "function_call") {
+    return { payload };
+  }
+
+  if (record.type === "function_call") {
+    return {
+      payload: {
+        name: record.name,
+        arguments: record.arguments,
+        call_id: record.call_id
+      }
+    };
+  }
+
+  if (payload && typeof payload === "object" && typeof payload.name === "string" && Object.prototype.hasOwnProperty.call(payload, "arguments")) {
+    return { payload };
+  }
+
+  return null;
+}
+
+function getToolCallArguments(value) {
+  return parseNestedJson(value);
+}
+
+function isApprovalCandidateToolName(name) {
+  if (typeof name !== "string" || !name) {
+    return false;
+  }
+
+  return name === "shell_command"
+    || name === "multi_tool_use.parallel"
+    || name === "parallel"
+    || name.endsWith(".shell_command")
+    || name.endsWith(".parallel");
+}
+
+function findApprovalRequest(value, toolName) {
+  return findApprovalRequestRecursive(value, normalizeToolName(toolName));
+}
+
+function findApprovalRequestRecursive(value, toolName) {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const match = findApprovalRequestRecursive(entry, toolName);
+      if (match) {
+        return match;
+      }
+    }
+    return null;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const currentToolName = deriveToolName(toolName, value);
+  if (value.sandbox_permissions === "require_escalated") {
+    return {
+      toolName: currentToolName,
+      args: value
+    };
+  }
+
+  if (currentToolName === "shell_command" && isApprovalLikeShellCommand(value)) {
+    return {
+      toolName: currentToolName,
+      args: value
+    };
+  }
+
+  for (const entry of Object.values(value)) {
+    const match = findApprovalRequestRecursive(entry, currentToolName);
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function deriveToolName(currentToolName, value) {
+  if (!value || typeof value !== "object") {
+    return currentToolName;
+  }
+
+  if (typeof value.recipient_name === "string" && value.recipient_name.trim()) {
+    return normalizeToolName(value.recipient_name);
+  }
+
+  if (typeof value.name === "string" && value.name.trim()) {
+    return normalizeToolName(value.name);
+  }
+
+  return currentToolName;
+}
+
+function normalizeToolName(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  const parts = trimmed.split(".");
+  return parts[parts.length - 1];
+}
+
+function isApprovalLikeShellCommand(args) {
+  if (!args || typeof args !== "object") {
+    return false;
+  }
+
+  if (typeof args.command !== "string" || !args.command.trim()) {
+    return false;
+  }
+
+  return isLikelyApprovalPromptCommand(args.command);
+}
+
+function isLikelyApprovalPromptCommand(command) {
+  const value = command.trim();
+  if (!value) {
+    return false;
+  }
+
+  return APPROVAL_LIKE_COMMAND_PATTERNS.some((pattern) => pattern.test(value));
+}
+
 function formatApprovalDetail(toolName, args) {
   if (typeof args.justification === "string" && args.justification.trim()) {
-    return args.justification.trim();
+    return sanitizeUserFacingText(args.justification.trim(), "");
   }
 
   if (typeof args.command === "string" && args.command.trim()) {
@@ -820,7 +1135,18 @@ function formatUserInputDetail(args) {
     parts.push(first.question.trim());
   }
 
-  return parts.length > 0 ? parts.join(" - ") : "Codex asked for input.";
+  const detail = parts.length > 0 ? parts.join(" - ") : "Codex asked for input.";
+  return sanitizeUserFacingText(detail, "Codex asked for input.");
+}
+
+function isResponseCompletedLogMessage(message) {
+  if (typeof message !== "string" || !message) {
+    return false;
+  }
+
+  return message.includes('"type":"response.completed"')
+    || message.includes('"type": "response.completed"')
+    || message.includes("websocket event: {\"type\":\"response.completed\"");
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -845,6 +1171,90 @@ function trimText(value, maxLength) {
   return `${compact.slice(0, maxLength - 1).trimEnd()}...`;
 }
 
+function createRuntimeStrings() {
+  if (!isChineseUiLanguage()) {
+    return {
+      taskCompletedTitle: "Codex task completed",
+      taskCompletedDetail: "The current Codex run reported completion.",
+      approvalTitle: "Codex needs approval",
+      approvalDetail: "Codex wants approval for an elevated command.",
+      userInputTitle: "Codex needs input",
+      userInputDetail: "Codex asked for input.",
+      manualTestDetail: "Manual test notification.",
+      watchersRestarted: "Codex Alerts watchers restarted.",
+      diagnosticsWritten: "Codex Alerts diagnostics written to the output channel."
+    };
+  }
+
+  return {
+    taskCompletedTitle: "Codex 任务已完成",
+    taskCompletedDetail: "当前 Codex 任务已报告完成。",
+    approvalTitle: "Codex 等待授权",
+    approvalDetail: "Codex 正在等待你授权高权限命令。",
+    userInputTitle: "Codex 等待输入",
+    userInputDetail: "Codex 正在等待你的输入。",
+    manualTestDetail: "这是一条手动测试提醒。",
+    watchersRestarted: "Codex Alerts 监听器已重启。",
+    diagnosticsWritten: "Codex Alerts 诊断信息已写入输出通道。"
+  };
+}
+
+function isChineseUiLanguage() {
+  const language = String(vscode.env.language || "").toLowerCase();
+  return language === "zh-cn" || language === "zh-hans" || language === "zh" || language.startsWith("zh-");
+}
+
+function sanitizeUserFacingText(value, fallback) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) {
+    return fallback;
+  }
+
+  return isLikelyMojibake(text) ? fallback : text;
+}
+
+function sanitizeNotificationTitle(kind, value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || isLikelyMojibake(text)) {
+    return getFallbackNotificationTitle(kind);
+  }
+
+  return text;
+}
+
+function getFallbackNotificationTitle(kind) {
+  if (!isChineseUiLanguage()) {
+    if (kind === "approval") {
+      return "Codex needs approval";
+    }
+    if (kind === "userInput") {
+      return "Codex needs input";
+    }
+    return "Codex task completed";
+  }
+
+  if (kind === "approval") {
+    return "Codex 等待授权";
+  }
+  if (kind === "userInput") {
+    return "Codex 等待输入";
+  }
+  return "Codex 任务已完成";
+}
+
+function isLikelyMojibake(value) {
+  if (typeof value !== "string" || !value) {
+    return false;
+  }
+
+  if (value.includes("\uFFFD")) {
+    return true;
+  }
+
+  const matches = value.match(/[锛銆鏈€鎴浣鍙璇鋒彁閱诲脊绐楁甯稿彲鐢ㄦ椂浼氱殑涓€]/g);
+  return Array.isArray(matches) && matches.length >= 3;
+}
+
 function normalizeSoundEffect(value) {
   if (value === "beep") {
     return value;
@@ -866,6 +1276,117 @@ function buildWindowsSoundCommand(config) {
   const frequency = clampNumber(config.soundFrequencyHz, 100, 4000, 880);
   const duration = clampNumber(config.soundDurationMs, 50, 5000, 250);
   return `[console]::beep(${frequency}, ${duration})`;
+}
+
+function buildWindowsNotificationScript() {
+  return `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class CodexAlertsNative {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct FLASHWINFO {
+    public UInt32 cbSize;
+    public IntPtr hwnd;
+    public UInt32 dwFlags;
+    public UInt32 uCount;
+    public UInt32 dwTimeout;
+  }
+
+  [DllImport("user32.dll")]
+  public static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
+}
+"@
+
+function Get-ParentProcessId([int]$Pid) {
+  try {
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $Pid" -ErrorAction Stop
+    return [int]$process.ParentProcessId
+  } catch {
+    return 0
+  }
+}
+
+function Get-WindowHandleFromProcessTree([int]$Pid) {
+  $visited = New-Object 'System.Collections.Generic.HashSet[int]'
+  $currentPid = $Pid
+  while ($currentPid -gt 0 -and -not $visited.Contains($currentPid)) {
+    $null = $visited.Add($currentPid)
+    try {
+      $process = Get-Process -Id $currentPid -ErrorAction Stop
+      if ($process.MainWindowHandle -ne 0) {
+        return $process.MainWindowHandle
+      }
+    } catch {
+    }
+
+    $currentPid = Get-ParentProcessId $currentPid
+  }
+
+  return [IntPtr]::Zero
+}
+
+if ($env:CODEX_ALERT_FLASH_TASKBAR -eq "1") {
+  $handle = Get-WindowHandleFromProcessTree([int]$env:CODEX_ALERT_PARENT_PID)
+  if ($handle -ne [IntPtr]::Zero) {
+    $flash = New-Object CodexAlertsNative+FLASHWINFO
+    $flash.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][CodexAlertsNative+FLASHWINFO])
+    $flash.hwnd = $handle
+    $flash.dwFlags = 14
+    $flash.uCount = 5
+    $flash.dwTimeout = 0
+    [CodexAlertsNative]::FlashWindowEx([ref]$flash) | Out-Null
+  }
+}
+
+$notifyIcon = New-Object System.Windows.Forms.NotifyIcon
+$notifyIcon.Visible = $true
+$notifyIcon.BalloonTipTitle = $env:CODEX_ALERT_TITLE
+$notifyIcon.BalloonTipText = $env:CODEX_ALERT_MESSAGE
+$notifyIcon.Text = [string]::Concat("Codex Alerts - ", $env:CODEX_ALERT_KIND)
+
+switch ($env:CODEX_ALERT_ICON) {
+  "Warning" {
+    $notifyIcon.Icon = [System.Drawing.SystemIcons]::Warning
+    $notifyIcon.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Warning
+  }
+  default {
+    $notifyIcon.Icon = [System.Drawing.SystemIcons]::Information
+    $notifyIcon.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
+  }
+}
+
+$timeoutMs = 6000
+if ([int]::TryParse($env:CODEX_ALERT_TIMEOUT_MS, [ref]$timeoutMs) -eq $false) {
+  $timeoutMs = 6000
+}
+
+$notifyIcon.ShowBalloonTip($timeoutMs)
+Start-Sleep -Milliseconds ([Math]::Max($timeoutMs, 3000))
+$notifyIcon.Dispose()
+`;
+}
+
+function encodePowerShellCommand(script) {
+  return Buffer.from(script, "utf16le").toString("base64");
+}
+
+function selectPreferredCodexLogDbs(home) {
+  const logsDbPath = path.join(home, ".codex", "logs_1.sqlite");
+  const stateDbPath = path.join(home, ".codex", "state_5.sqlite");
+
+  if (existsSync(logsDbPath)) {
+    return [logsDbPath];
+  }
+
+  if (existsSync(stateDbPath)) {
+    return [stateDbPath];
+  }
+
+  return [logsDbPath];
 }
 
 async function collectRecentJsonlFiles(root, limit) {

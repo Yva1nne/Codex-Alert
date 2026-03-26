@@ -2,8 +2,16 @@
   "name": "codex-alerts",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.0.3",
+  "version": "0.0.11",
   "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Yva1nne/Codex-Alert.git"
+  },
+  "homepage": "https://github.com/Yva1nne/Codex-Alert#readme",
+  "bugs": {
+    "url": "https://github.com/Yva1nne/Codex-Alert/issues"
+  },
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -64,6 +72,16 @@
           "type": "boolean",
           "default": false,
           "description": "%config.onlyNotifyWhenWindowInactive.description%"
+        },
+        "codexAlerts.useWindowsMessageBox": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.useWindowsMessageBox.description%"
+        },
+        "codexAlerts.flashTaskbarOnAlert": {
+          "type": "boolean",
+          "default": true,
+          "description": "%config.flashTaskbarOnAlert.description%"
         },
         "codexAlerts.enableSound": {
           "type": "boolean",

@@ -37,7 +37,12 @@ def main() -> int:
                     message
                 from logs
                 where id > ?
-                  and target = 'codex_app_server::codex_message_processor'
+                  and target in (
+                    'codex_app_server::codex_message_processor',
+                    'codex_app_server::message_processor',
+                    'codex_api::endpoint::responses_websocket',
+                    'log'
+                  )
                 order by id asc
                 limit ?
                 """,

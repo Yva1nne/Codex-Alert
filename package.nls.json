@@ -11,6 +11,8 @@
   "config.enableApprovalAlerts.description": "Show a popup when Codex asks for elevated command approval.",
   "config.enableUserInputAlerts.description": "Show a popup when Codex asks for user input.",
   "config.onlyNotifyWhenWindowInactive.description": "Only show Codex alerts when this VS Code window is not focused.",
+  "config.useWindowsMessageBox.description": "Use a native Windows tray notification for Codex alerts so they appear near the taskbar instead of inside VS Code.",
+  "config.flashTaskbarOnAlert.description": "Flash the VS Code taskbar button when a Codex alert arrives on Windows.",
   "config.enableSound.description": "Play a short sound with each Codex alert.",
   "config.soundEffect.description": "Choose which Windows sound effect to play for Codex alerts.",
   "config.soundEffect.beep": "Use the built-in console beep. Frequency and duration settings apply.",
