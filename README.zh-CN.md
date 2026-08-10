@@ -105,3 +105,30 @@ Codex Alerts 是一个轻量的 VS Code 配套扩展，用来监听本地 Codex 
 - `beep` 音效使用 `Console.Beep`。
 - 其他音效选项使用 Windows 系统音。
 - 这是一个 companion extension，不会修改官方 Codex 扩展。
+
+## 隐私与兼容性
+
+- 日志与 session 解析都在本机完成，扩展不会上传这些文件。
+- 通知和 VS Code Output 面板可能显示命令摘要、审批原因或输入问题；共享屏幕或在锁屏显示通知时请注意隐私。
+- Windows 托盘通知、任务栏闪烁和系统音仅在 Windows 可用，其他平台回退到 VS Code 标准通知。
+- 检测逻辑依赖 Codex 当前的本地日志格式。Codex 更新后若提醒异常，请先运行 `Codex Alerts: Show Diagnostics`。
+
+## 从源码构建
+
+使用 Python 构建 VSIX：
+
+```bash
+python scripts/build_vsix.py
+```
+
+Windows PowerShell 也可以运行：
+
+```powershell
+.\scripts\build_vsix.ps1
+```
+
+产物写入 `dist/`。仓库当前没有自动化测试套件；发布前请运行三条测试通知命令和 `Show Diagnostics`。
+
+## License
+
+仓库当前未提供许可证文件；在正式补充许可证前，不视为已授予开源使用许可。

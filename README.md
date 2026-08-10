@@ -109,6 +109,33 @@ Available from the Command Palette:
 - The other sound options use Windows system sounds.
 - This is a companion extension and does not patch the official Codex extension.
 
+### Privacy and Compatibility
+
+- Log and session parsing happens locally; the extension does not upload those files.
+- Notifications and the VS Code Output panel may display command summaries, approval reasons, or user-input questions. Be careful when sharing your screen or showing notifications on a lock screen.
+- Windows tray notifications, taskbar flashing, and system sounds are Windows-only. Other platforms fall back to standard VS Code notifications.
+- Detection depends on Codex's current local log formats. After a Codex update, use `Codex Alerts: Show Diagnostics` if alerts stop working.
+
+### Build from Source
+
+Build a VSIX with Python:
+
+```bash
+python scripts/build_vsix.py
+```
+
+On Windows PowerShell, you can also run:
+
+```powershell
+.\scripts\build_vsix.ps1
+```
+
+The package is written to `dist/`. There is currently no automated test suite; use the three test-notification commands and `Show Diagnostics` before publishing a release.
+
+### License
+
+This repository does not currently include a license file. No open-source license is granted until one is added.
+
 ---
 
 <a id="zh-cn"></a>
@@ -214,3 +241,30 @@ Codex Alerts 是一个轻量的 VS Code 配套扩展，用来监听本地 Codex 
 - `beep` 音效使用 `Console.Beep`。
 - 其他音效选项使用 Windows 系统音。
 - 这是一个 companion extension，不会修改官方 Codex 扩展。
+
+### 隐私与兼容性
+
+- 日志与 session 解析都在本机完成，扩展不会上传这些文件。
+- 通知和 VS Code Output 面板可能显示命令摘要、审批原因或输入问题；共享屏幕或在锁屏显示通知时请注意隐私。
+- Windows 托盘通知、任务栏闪烁和系统音仅在 Windows 可用，其他平台回退到 VS Code 标准通知。
+- 检测逻辑依赖 Codex 当前的本地日志格式。Codex 更新后若提醒异常，请先运行 `Codex Alerts: Show Diagnostics`。
+
+### 从源码构建
+
+使用 Python 构建 VSIX：
+
+```bash
+python scripts/build_vsix.py
+```
+
+Windows PowerShell 也可以运行：
+
+```powershell
+.\scripts\build_vsix.ps1
+```
+
+产物写入 `dist/`。仓库当前没有自动化测试套件；发布前请运行三条测试通知命令和 `Show Diagnostics`。
+
+### License
+
+仓库当前未提供许可证文件；在正式补充许可证前，不视为已授予开源使用许可。
